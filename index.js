@@ -36,7 +36,7 @@ app.post('/api/ai/insight', async (req, res) => {
 
   try {
     const model = genAI.getGenerativeModel({
-      model: 'gemini-2.0-flash',
+      model: 'gemini-3-flash-preview',
       systemInstruction: SYSTEM_PROMPT,
     });
 
@@ -65,7 +65,7 @@ app.post('/api/ai/chat', async (req, res) => {
       : SYSTEM_PROMPT;
 
     const model = genAI.getGenerativeModel({
-      model: 'gemini-2.0-flash',
+      model: 'gemini-3-flash-preview',
       systemInstruction: systemWithContext,
     });
 
