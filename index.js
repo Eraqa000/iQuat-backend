@@ -1,23 +1,92 @@
-// iquat-backend/index.js
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 8089;
 
-app.use(cors()); // Чтобы мобильное приложение могло достучаться до сервера
+app.use(cors());
 app.use(express.json());
 
-// Эндпоинт для получения настроек
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+
+// Системный промпт — контекст умного дома iQuat
+const SYSTEM_PROMPT = `Ты — AI-ассистент умного дома iQuat.
+Ты помогаешь анализировать качество воздуха и климат в офисных помещениях 133-a и 133-b.
+Отвечай кратко и по делу. Давай конкретные рекомендации на основе данных сенсоров.
+Используй русский язык. Не используй markdown — только простой текст.
+Упоминай конкретные значения из данных которые тебе передают.`;
+
+// ── Эндпоинт конфига ──
 app.get('/api/config', (req, res) => {
-  // В будущем сюда можно добавить проверку ключа API в заголовках
   res.json({
     ha_url: process.env.HA_URL,
-    ha_token: process.env.HA_TOKEN
+    ha_token: process.env.HA_TOKEN,
   });
 });
 
-app.listen(PORT, () => {
+// ── Вариант A: короткий инсайт по текущим данным ──
+app.post('/api/ai/insight', async (req, res) => {
+  const { sensors } = req.body;
+
+  if (!sensors) {
+    return res.status(400).json({ error: 'sensors required' });
+  }
+
+  try {
+    const model = genAI.getGenerativeModel({
+      model: 'gemini-2.0-flash',
+      systemInstruction: SYSTEM_PROMPT,
+    });
+
+    const result = await model.generateContent(
+      `Текущие показатели воздуха:\n${JSON.stringify(sensors, null, 2)}\n\nДай краткий инсайт (1-2 предложения): как сейчас воздух и что рекомендуешь?`
+    );
+
+    res.json({ insight: result.response.text() });
+  } catch (err) {
+    console.error('[AI Insight Error]', err.message);
+    res.status(500).json({ error: 'AI недоступен', detail: err.message });
+  }
+});
+
+// ── Вариант B: чат с историей сообщений ──
+app.post('/api/ai/chat', async (req, res) => {
+  const { messages, sensors } = req.body;
+
+  if (!messages || !Array.isArray(messages)) {
+    return res.status(400).json({ error: 'messages required' });
+  }
+
+  try {
+    const systemWithContext = sensors
+      ? `${SYSTEM_PROMPT}\n\nТекущее состояние дома:\n${JSON.stringify(sensors, null, 2)}`
+      : SYSTEM_PROMPT;
+
+    const model = genAI.getGenerativeModel({
+      model: 'gemini-2.0-flash',
+      systemInstruction: systemWithContext,
+    });
+
+    // Конвертируем формат сообщений под Gemini (user/model вместо user/assistant)
+    const history = messages.slice(0, -1).map(m => ({
+      role: m.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: m.content }],
+    }));
+
+    const lastMessage = messages[messages.length - 1].content;
+
+    const chat = model.startChat({ history });
+    const result = await chat.sendMessage(lastMessage);
+
+    res.json({ reply: result.response.text() });
+  } catch (err) {
+    console.error('[AI Chat Error]', err.message);
+    res.status(500).json({ error: 'AI недоступен', detail: err.message });
+  }
+});
+
+app.listen(PORT, '0.0.0.0',() => {
   console.log(`Сервер iQuat запущен на порту ${PORT}`);
 });
