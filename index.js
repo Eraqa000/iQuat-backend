@@ -1,7 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const Groq = require('groq-sdk');
 
 const app = express();
 const PORT = process.env.PORT || 8089;
@@ -9,7 +9,7 @@ const PORT = process.env.PORT || 8089;
 app.use(cors());
 app.use(express.json());
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 // Системный промпт — контекст умного дома iQuat
 const SYSTEM_PROMPT = `Ты — AI-ассистент умного дома iQuat.
@@ -35,16 +35,16 @@ app.post('/api/ai/insight', async (req, res) => {
   }
 
   try {
-    const model = genAI.getGenerativeModel({
-      model: 'gemini-3-flash-preview',
-      systemInstruction: SYSTEM_PROMPT,
+    const response = await groq.chat.completions.create({
+      model: 'llama-3.3-70b-versatile',
+      max_tokens: 150,
+      messages: [
+        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'user', content: `Текущие показатели воздуха:\n${JSON.stringify(sensors, null, 2)}\n\nДай краткий инсайт (1-2 предложения): как сейчас воздух и что рекомендуешь?` },
+      ],
     });
 
-    const result = await model.generateContent(
-      `Текущие показатели воздуха:\n${JSON.stringify(sensors, null, 2)}\n\nДай краткий инсайт (1-2 предложения): как сейчас воздух и что рекомендуешь?`
-    );
-
-    res.json({ insight: result.response.text() });
+    res.json({ insight: response.choices[0].message.content });
   } catch (err) {
     console.error('[AI Insight Error]', err.message);
     res.status(500).json({ error: 'AI недоступен', detail: err.message });
@@ -64,23 +64,16 @@ app.post('/api/ai/chat', async (req, res) => {
       ? `${SYSTEM_PROMPT}\n\nТекущее состояние дома:\n${JSON.stringify(sensors, null, 2)}`
       : SYSTEM_PROMPT;
 
-    const model = genAI.getGenerativeModel({
-      model: 'gemini-3-flash-preview',
-      systemInstruction: systemWithContext,
+    const response = await groq.chat.completions.create({
+      model: 'llama-3.3-70b-versatile',
+      max_tokens: 400,
+      messages: [
+        { role: 'system', content: systemWithContext },
+        ...messages,
+      ],
     });
 
-    // Конвертируем формат сообщений под Gemini (user/model вместо user/assistant)
-    const history = messages.slice(0, -1).map(m => ({
-      role: m.role === 'assistant' ? 'model' : 'user',
-      parts: [{ text: m.content }],
-    }));
-
-    const lastMessage = messages[messages.length - 1].content;
-
-    const chat = model.startChat({ history });
-    const result = await chat.sendMessage(lastMessage);
-
-    res.json({ reply: result.response.text() });
+    res.json({ reply: response.choices[0].message.content });
   } catch (err) {
     console.error('[AI Chat Error]', err.message);
     res.status(500).json({ error: 'AI недоступен', detail: err.message });
